@@ -1,3 +1,8 @@
+variable "domain_name" {
+  type    = string
+  default = ""
+}
+
 provider "aws" {
   region = "ap-south-1"
 }
@@ -67,29 +72,7 @@ resource "aws_security_group" "ecs" {
   }
 }
 
-resource "aws_service_discovery_private_dns_namespace" "sock5_namespace" {
-  name        = "sock5.local"
-  vpc         = aws_vpc.main.id
-  description = "Private DNS namespace for SOCKS5 service"
-}
-
-resource "aws_service_discovery_service" "sock5_service" {
-  name = "sock5"
-
-  dns_config {
-    namespace_id = aws_service_discovery_private_dns_namespace.sock5_namespace.id
-    dns_records {
-      type = "A"
-      ttl  = 60
-    }
-  }
-
-  health_check_custom_config {
-    failure_threshold = 1
-  }
-}
-
-resource "aws_ecs_cluster" "sock5_cluster" {
+resource "aws_ecs_cluster" "socks5_cluster" {
   name = "socks5-cluster"
 }
 
@@ -221,7 +204,7 @@ EOF
 }
 
 
-resource "aws_ecs_task_definition" "sock5_task" {
+resource "aws_ecs_task_definition" "socks5_task" {
   family                   = "socks5-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
@@ -272,10 +255,10 @@ resource "aws_ecs_task_definition" "sock5_task" {
   }
 }
 
-resource "aws_ecs_service" "sock5_service" {
+resource "aws_ecs_service" "socks5_service" {
   name                   = "socks5-service"
-  cluster                = aws_ecs_cluster.sock5_cluster.id
-  task_definition        = aws_ecs_task_definition.sock5_task.arn
+  cluster                = aws_ecs_cluster.socks5_cluster.id
+  task_definition        = aws_ecs_task_definition.socks5_task.arn
   desired_count          = 0         // Change desired count to a non-zero value
   launch_type            = "FARGATE" // Specify Fargate launch type
   enable_execute_command = true
@@ -284,10 +267,6 @@ resource "aws_ecs_service" "sock5_service" {
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
 
-  }
-
-  service_registries {
-    registry_arn = aws_service_discovery_service.sock5_service.arn
   }
 
   lifecycle {
@@ -327,14 +306,30 @@ resource "aws_iam_role" "lambda_execution_role" {
             "ecs:DescribeServices"
           ]
           Resource = "*"
+        },
+        {
+          Effect = "Allow",
+          Action = [
+            "ecs:DescribeTasks",
+            "ecs:ListTasks",
+            "ec2:DescribeNetworkInterfaces"
+          ],
+          Resource = "*"
+        },
+        {
+          Effect = "Allow",
+          Action = [
+            "route53:ChangeResourceRecordSets"
+          ],
+          Resource = "*"
         }
       ]
     })
   }
 }
 
-resource "aws_lambda_function" "start_sock5" {
-  function_name    = "startSock5"
+resource "aws_lambda_function" "start_socks5" {
+  function_name    = "startsocks5"
   role             = aws_iam_role.lambda_execution_role.arn
   handler          = "index.start_handler"
   runtime          = "python3.9"
@@ -343,14 +338,14 @@ resource "aws_lambda_function" "start_sock5" {
 
   environment {
     variables = {
-      ECS_CLUSTER = aws_ecs_cluster.sock5_cluster.id
-      ECS_SERVICE = aws_ecs_service.sock5_service.id
+      ECS_CLUSTER = aws_ecs_cluster.socks5_cluster.id
+      ECS_SERVICE = aws_ecs_service.socks5_service.id
     }
   }
 }
 
-resource "aws_lambda_function" "stop_sock5" {
-  function_name    = "stopSock5"
+resource "aws_lambda_function" "stop_socks5" {
+  function_name    = "stopsocks5"
   role             = aws_iam_role.lambda_execution_role.arn
   handler          = "index.stop_handler"
   runtime          = "python3.9"
@@ -359,78 +354,78 @@ resource "aws_lambda_function" "stop_sock5" {
 
   environment {
     variables = {
-      ECS_CLUSTER = aws_ecs_cluster.sock5_cluster.id
-      ECS_SERVICE = aws_ecs_service.sock5_service.id
+      ECS_CLUSTER = aws_ecs_cluster.socks5_cluster.id
+      ECS_SERVICE = aws_ecs_service.socks5_service.id
     }
   }
 }
 
-resource "aws_api_gateway_rest_api" "sock5_api" {
+resource "aws_api_gateway_rest_api" "socks5_api" {
   name = "socks5-api"
 }
 
 resource "aws_api_gateway_resource" "start_resource" {
-  rest_api_id = aws_api_gateway_rest_api.sock5_api.id
-  parent_id   = aws_api_gateway_rest_api.sock5_api.root_resource_id
+  rest_api_id = aws_api_gateway_rest_api.socks5_api.id
+  parent_id   = aws_api_gateway_rest_api.socks5_api.root_resource_id
   path_part   = "start"
 }
 
 resource "aws_api_gateway_resource" "stop_resource" {
-  rest_api_id = aws_api_gateway_rest_api.sock5_api.id
-  parent_id   = aws_api_gateway_rest_api.sock5_api.root_resource_id
+  rest_api_id = aws_api_gateway_rest_api.socks5_api.id
+  parent_id   = aws_api_gateway_rest_api.socks5_api.root_resource_id
   path_part   = "stop"
 }
 
 resource "aws_api_gateway_method" "start_method" {
-  rest_api_id   = aws_api_gateway_rest_api.sock5_api.id
+  rest_api_id   = aws_api_gateway_rest_api.socks5_api.id
   resource_id   = aws_api_gateway_resource.start_resource.id
-  http_method   = "POST"
+  http_method   = "GET"
   authorization = "NONE"
 }
 
 resource "aws_api_gateway_method" "stop_method" {
-  rest_api_id   = aws_api_gateway_rest_api.sock5_api.id
+  rest_api_id   = aws_api_gateway_rest_api.socks5_api.id
   resource_id   = aws_api_gateway_resource.stop_resource.id
-  http_method   = "POST"
+  http_method   = "GET"
   authorization = "NONE"
 }
 
 resource "aws_lambda_permission" "start_api" {
   statement_id  = "AllowAPIGatewayInvokeStart"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.start_sock5.arn
+  function_name = aws_lambda_function.start_socks5.arn
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.sock5_api.execution_arn}/*/POST/start"
+  source_arn    = "${aws_api_gateway_rest_api.socks5_api.execution_arn}/*/GET/start"
 }
 
 resource "aws_lambda_permission" "stop_api" {
   statement_id  = "AllowAPIGatewayInvokeStop"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.stop_sock5.arn
+  function_name = aws_lambda_function.stop_socks5.arn
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.sock5_api.execution_arn}/*/POST/stop"
+  source_arn    = "${aws_api_gateway_rest_api.socks5_api.execution_arn}/*/GET/stop"
 }
 
 resource "aws_api_gateway_integration" "start_integration" {
-  rest_api_id             = aws_api_gateway_rest_api.sock5_api.id
+  rest_api_id             = aws_api_gateway_rest_api.socks5_api.id
   resource_id             = aws_api_gateway_resource.start_resource.id
   http_method             = aws_api_gateway_method.start_method.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.start_sock5.invoke_arn
+  uri                     = aws_lambda_function.start_socks5.invoke_arn
 }
 
 resource "aws_api_gateway_integration" "stop_integration" {
-  rest_api_id             = aws_api_gateway_rest_api.sock5_api.id
+  rest_api_id             = aws_api_gateway_rest_api.socks5_api.id
   resource_id             = aws_api_gateway_resource.stop_resource.id
   http_method             = aws_api_gateway_method.stop_method.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.stop_sock5.invoke_arn
+  uri                     = aws_lambda_function.stop_socks5.invoke_arn
 }
 
-resource "aws_api_gateway_deployment" "sock5_api" {
-  rest_api_id = aws_api_gateway_rest_api.sock5_api.id
+resource "aws_api_gateway_deployment" "socks5_api" {
+  rest_api_id = aws_api_gateway_rest_api.socks5_api.id
   stage_name  = "prod"
 
   depends_on = [
